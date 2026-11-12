@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gavy Pechurina | Menú y pedido</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>🍗 Gavy Pechurina <small id="who"></small></h1>
+  <button class="btn ghost" id="salir">Salir</button>
+</header>
+
+<div class="wrap layout">
+  <section>
+    <div id="menu"><p class="empty">Cargando menú…</p></div>
+
+    <div class="card hist" id="histBox" hidden>
+      <h2>Mis pedidos</h2>
+      <div id="hist"></div>
+    </div>
+  </section>
+
+  <aside class="card cart">
+    <h3>🛒 Tu pedido</h3>
+    <div id="lines"><p class="empty">Aún no has agregado nada.</p></div>
+    <div class="total"><span>Total</span><span id="total">RD$ 0</span></div>
+
+    <form id="pedido" novalidate>
+      <label for="nombre">Nombre</label>
+      <input id="nombre" required maxlength="100" autocomplete="name">
+      <label for="tel">Teléfono / WhatsApp</label>
+      <input id="tel" type="tel" required maxlength="30" autocomplete="tel">
+      <label for="dir">Dirección (o “lo busco”)</label>
+      <input id="dir" maxlength="300" autocomplete="street-address">
+      <label for="notas">Notas</label>
+      <textarea id="notas" rows="2" maxlength="500" placeholder="Sin ají, bien cocido…"></textarea>
+      <div style="margin-top:14px"><button class="btn alt" id="comprar" style="width:100%" disabled>Hacer pedido</button></div>
+      <div id="msg" class="msg" role="alert"></div>
+    </form>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+const sb = supabase.createClient(GAVY.SUPABASE_URL, GAVY.SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+const rd = n => "RD$ " + Number(n).toLocaleString("es-DO",{maximumFractionDigits:2});
+const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let productos=[], carrito=[]; // {producto_id,nombre,opcion,precio,cantidad}
+
+function msg(t,tipo){ const e=$("msg"); e.textContent=t; e.className="msg"+(t?(" "+(tipo||"err")):""); }
+
+async function init(){
+  const {data:{session}} = await sb.auth.getSession();
+  if(!session){ location.href="index.html"; return; }
+  $("who").textContent = session.user.email;
+  await Promise.all([cargarMenu(), cargarHistorial()]);
+}
+
+async function cargarMenu(){
+  const {data,error} = await sb.from("gavy_productos").select("*").order("orden");
+  if(error){ $("menu").innerHTML='<p class="empty">No se pudo cargar el menú.</p>'; return; }
+  productos = data;
+  const cats = [...new Set(data.map(p=>p.categoria))];
+  $("menu").innerHTML = cats.map(c=>`<h2>${esc(c)}</h2>` + data.filter(p=>p.categoria===c).map(p=>`
+    <div class="prod">
+      <div class="row"><b>${esc(p.nombre)}</b><span class="price">${rd(p.precio)}</span></div>
+      ${p.descripcion?`<p>${esc(p.descripcion)}</p>`:""}
+      <div class="act">
+        ${p.opciones.length?`<select aria-label="Acompañante de ${esc(p.nombre)}" id="op${p.id}">${p.opciones.map(o=>`<option>${esc(o)}</option>`).join("")}</select>`:""}
+        <button class="btn" data-add="${p.id}">Agregar</button>
+      </div>
+    </div>`).join("")).join("");
+}
+
+$("menu").addEventListener("click", e=>{
+  const id = e.target.dataset.add; if(!id) return;
+  const p = productos.find(x=>x.id==id);
+  const sel = $("op"+id); const opcion = sel ? sel.value : null;
+  const ex = carrito.find(i=>i.producto_id==p.id && i.opcion===opcion);
+  if(ex) ex.cantidad++; else carrito.push({producto_id:p.id,nombre:p.nombre,opcion,precio:Number(p.precio),cantidad:1});
+  pintar();
+});
+
+$("lines").addEventListener("click", e=>{
+  const k = e.target.dataset.k; if(k===undefined) return;
+  const it = carrito[+k]; if(!it) return;
+  it.cantidad += e.target.dataset.d==="+" ? 1 : -1;
+  if(it.cantidad<=0) carrito.splice(+k,1);
+  if(it.cantidad>50) it.cantidad=50;
+  pintar();
+});
+
+function pintar(){
+  $("lines").innerHTML = carrito.length ? carrito.map((i,k)=>`
+    <div class="line"><div><b>${esc(i.nombre)}</b>${i.opcion?` <span class="badge">${esc(i.opcion)}</span>`:""}
+      <div class="q"><button type="button" data-k="${k}" data-d="-" aria-label="Quitar uno">−</button><span>${i.cantidad}</span><button type="button" data-k="${k}" data-d="+" aria-label="Agregar uno">+</button></div></div>
+      <div>${rd(i.precio*i.cantidad)}</div></div>`).join("") : '<p class="empty">Aún no has agregado nada.</p>';
+  $("total").textContent = rd(carrito.reduce((s,i)=>s+i.precio*i.cantidad,0));
+  $("comprar").disabled = !carrito.length;
+}
+
+$("pedido").addEventListener("submit", async ev=>{
+  ev.preventDefault(); msg("");
+  const nombre=$("nombre").value.trim(), tel=$("tel").value.trim();
+  if(!nombre||!tel) return msg("Escribe tu nombre y tu teléfono.");
+  if(!carrito.length) return msg("Agrega algo al pedido.");
+  $("comprar").disabled=true;
+  const {error} = await sb.rpc("gavy_crear_pedido",{
+    p_nombre:nombre, p_telefono:tel, p_direccion:$("dir").value.trim(), p_notas:$("notas").value.trim(),
+    p_items: carrito.map(i=>({producto_id:i.producto_id,opcion:i.opcion,cantidad:i.cantidad}))
+  });
+  if(error){ msg("No se pudo enviar el pedido. Intenta de nuevo."); $("comprar").disabled=false; return; }
+  carrito=[]; pintar(); $("notas").value="";
+  msg("¡Pedido enviado! Gracias por tu compra 🍗","ok");
+  cargarHistorial();
+});
+
+async function cargarHistorial(){
+  const {data} = await sb.from("gavy_pedidos").select("id,total,estado,created_at,gavy_pedido_items(nombre,opcion,cantidad)")
+    .order("created_at",{ascending:false}).limit(10);
+  if(!data||!data.length){ $("histBox").hidden=true; return; }
+  $("histBox").hidden=false;
+  $("hist").innerHTML = data.map(p=>`<div class="item"><b>${new Date(p.created_at).toLocaleString("es-DO",{dateStyle:"medium",timeStyle:"short"})}</b>
+    · ${rd(p.total)} <span class="badge">${esc(p.estado)}</span><br>
+    ${p.gavy_pedido_items.map(i=>`${i.cantidad}× ${esc(i.nombre)}${i.opcion?` (${esc(i.opcion)})`:""}`).join(", ")}</div>`).join("");
+}
+
+$("salir").onclick = async ()=>{ await sb.auth.signOut(); location.href="index.html"; };
+sb.auth.onAuthStateChange((ev)=>{ if(ev==="SIGNED_OUT") location.href="index.html"; });
+init();
+</script>
+</body>
+</html>

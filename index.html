@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gavy Pechurina | Iniciar sesión</title>
+<meta name="description" content="Pollo brito, pechurina brita, bollito, agua y refresco. Entra y haz tu pedido.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="login">
+  <div class="card">
+    <h1>🍗 Gavy Pechurina</h1>
+    <p class="sub">Pollo brito, pechurina brita y más. Entra para hacer tu pedido.</p>
+
+    <div class="tabs" role="tablist">
+      <button type="button" id="tabIn" class="on">Iniciar sesión</button>
+      <button type="button" id="tabUp">Crear cuenta</button>
+    </div>
+
+    <form id="form" novalidate>
+      <label for="email">Correo</label>
+      <input id="email" type="email" autocomplete="email" required placeholder="tucorreo@ejemplo.com">
+      <label for="pass">Contraseña</label>
+      <input id="pass" type="password" autocomplete="current-password" required minlength="6" placeholder="Mínimo 6 caracteres">
+      <div style="margin-top:16px"><button class="btn" id="go" style="width:100%">Entrar</button></div>
+      <div id="msg" class="msg" role="alert"></div>
+    </form>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+const sb = supabase.createClient(GAVY.SUPABASE_URL, GAVY.SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+let modo = "in";
+
+function setModo(m){
+  modo = m;
+  $("tabIn").classList.toggle("on", m==="in");
+  $("tabUp").classList.toggle("on", m==="up");
+  $("go").textContent = m==="in" ? "Entrar" : "Crear cuenta";
+  $("pass").autocomplete = m==="in" ? "current-password" : "new-password";
+  msg("");
+}
+function msg(t, tipo){ const e=$("msg"); e.textContent=t; e.className="msg"+(t?(" "+(tipo||"err")):""); }
+function traducir(e){
+  const m=(e.message||"").toLowerCase();
+  if(m.includes("invalid login")) return "Correo o contraseña incorrectos.";
+  if(m.includes("already")) return "Ese correo ya tiene cuenta. Inicia sesión.";
+  if(m.includes("password")) return "La contraseña debe tener al menos 6 caracteres.";
+  if(m.includes("email")) return "Revisa que el correo esté bien escrito.";
+  if(m.includes("rate")) return "Demasiados intentos. Espera un momento.";
+  return "No se pudo completar. Intenta de nuevo.";
+}
+
+$("tabIn").onclick = () => setModo("in");
+$("tabUp").onclick = () => setModo("up");
+
+$("form").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const email=$("email").value.trim(), password=$("pass").value;
+  if(!email || password.length<6){ return msg("Escribe tu correo y una contraseña de al menos 6 caracteres."); }
+  $("go").disabled=true; msg("");
+  try{
+    if(modo==="in"){
+      const {error}=await sb.auth.signInWithPassword({email,password});
+      if(error) throw error;
+      location.href="tienda.html";
+    }else{
+      const {data,error}=await sb.auth.signUp({email,password});
+      if(error) throw error;
+      if(data.session){ location.href="tienda.html"; }
+      else{ msg("Cuenta creada. Revisa tu correo para confirmarla y luego inicia sesión.","ok"); setModo("in"); $("msg").className="msg ok"; $("msg").textContent="Cuenta creada. Revisa tu correo para confirmarla y luego inicia sesión."; }
+    }
+  }catch(e){ msg(traducir(e)); }
+  finally{ $("go").disabled=false; }
+});
+
+sb.auth.getSession().then(({data})=>{ if(data.session) location.href="tienda.html"; });
+</script>
+</body>
+</html>
